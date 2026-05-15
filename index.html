@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>기업 연봉 분석 - Asary</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="./data/companies.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -32,6 +31,7 @@
         .search-box input:focus { border-color: var(--primary); }
         .search-box button { padding: 12px 24px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
         .search-box button:hover { opacity: 0.9; }
+        .search-box button:disabled { opacity: 0.5; cursor: not-allowed; }
         .checkbox-wrap { display: flex; align-items: center; gap: 8px; color: var(--text-sub); font-size: 14px; }
         .checkbox-wrap input { width: 18px; height: 18px; accent-color: var(--primary); }
 
@@ -103,8 +103,8 @@
                 <input type="checkbox" id="includeAll">
                 <label for="includeAll">300인 미만 기업 포함</label>
             </div>
-            <button id="searchBtn">검색</button>
-            <span id="dataStatus"></span>
+            <button type="button" id="searchBtn" disabled>검색</button>
+            <span id="dataStatus">데이터 로딩 중...</span>
         </div>
 
         <div class="results-header">
@@ -122,7 +122,7 @@
         <div class="detail-panel" id="detailPanel">
             <div class="detail-header">
                 <div class="detail-title" id="companyTitle">-</div>
-                <button class="close-btn" id="closeBtn">닫기</button>
+                <button type="button" class="close-btn" id="closeBtn">닫기</button>
             </div>
             <div class="detail-stats">
                 <div class="stat-card">
@@ -197,48 +197,75 @@
         let searchDebounceTimer = null;
         let dataReady = false;
 
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function updateProgress(pct) {
+            const pt = document.getElementById('progressText');
+            const pb = document.getElementById('progressBar');
+            if (pt) pt.textContent = pct + '%';
+            if (pb) pb.style.width = pct + '%';
+        }
+
+        function showLoading(msg) {
+            document.getElementById('companyList').innerHTML =
+                '<div class="loading"><div class="spinner"></div>' + msg + '</div>';
+        }
+
         function init() {
             const statusEl = document.getElementById('dataStatus');
-            const progressText = document.getElementById('progressText');
-            const progressBar = document.getElementById('progressBar');
+            const searchBtn = document.getElementById('searchBtn');
 
             if (typeof COMPANIES_DATA === 'undefined') {
-                document.getElementById('companyList').innerHTML = '<div class="error-msg"><h3>데이터 파일 로드 실패</h3><p>data/companies.js 파일을 확인해주세요.</p></div>';
+                document.getElementById('companyList').innerHTML =
+                    '<div class="no-data">데이터 파일(data/companies.js)을 찾을 수 없습니다.<br>서버에서 실행하거나 파일 경로를 확인해주세요.</div>';
+                statusEl.textContent = '로드 실패';
                 return;
             }
 
-            setTimeout(() => {
-                const total = COMPANIES_DATA.length;
-                const seenKeys = new Set();
+            const rawData = COMPANIES_DATA;
+            const total = rawData.length;
+            const seenKeys = new Set();
+            let processed = 0;
+            const CHUNK = 5000;
 
-                for (let i = 0; i < total; i++) {
-                    const row = COMPANIES_DATA[i];
+            function processChunk() {
+                const end = Math.min(processed + CHUNK, total);
+                for (let i = processed; i < end; i++) {
+                    const row = rawData[i];
                     const key = row.company_name + '|' + row.business_no;
                     if (seenKeys.has(key)) continue;
                     seenKeys.add(key);
-
                     allCompanies.push(row);
                     companyIndex.set(key, row);
-
-                    if (i % 2000 === 0) {
-                        const pct = Math.round((i / total) * 100);
-                        if (progressText) progressText.textContent = pct + '%';
-                        if (progressBar) progressBar.style.width = pct + '%';
-                    }
                 }
+                processed = end;
 
-                if (progressText) progressText.textContent = '100%';
-                if (progressBar) progressBar.style.width = '100%';
+                const pct = Math.round((processed / total) * 100);
+                updateProgress(pct);
+                statusEl.textContent = Math.round(processed / 1000) + 'K / ' + Math.round(total / 1000) + 'K 처리 중...';
 
-                dataReady = true;
-                statusEl.textContent = allCompanies.length.toLocaleString() + '개사 로드됨';
-                setTimeout(() => {
-                    document.getElementById('companyList').innerHTML = '<div class="no-data">검색어를 입력해주세요</div>';
-                }, 300);
-            }, 50);
+                if (processed < total) {
+                    setTimeout(processChunk, 0);
+                } else {
+                    dataReady = true;
+                    searchBtn.disabled = false;
+                    statusEl.textContent = allCompanies.length.toLocaleString() + '개사 로드 완료';
+                    document.getElementById('companyList').innerHTML =
+                        '<div class="no-data">검색어를 입력해주세요</div>';
+                }
+            }
+
+            setTimeout(processChunk, 100);
         }
 
         function performSearch() {
+            if (!dataReady) {
+                alert('데이터가 아직 로딩 중입니다. 잠시 기다려주세요.');
+                return;
+            }
+
             const keyword = document.getElementById('keyword').value.trim();
             const includeAll = document.getElementById('includeAll').checked;
 
@@ -253,10 +280,9 @@
         }
 
         function searchInMemory(keyword, includeAll) {
-            const container = document.getElementById('companyList');
-            container.innerHTML = '<div class="loading"><div class="spinner"></div>검색 중...</div>';
+            showLoading('검색 중...');
 
-            requestAnimationFrame(() => {
+            setTimeout(function() {
                 const keywordLower = keyword.toLowerCase();
                 const seenKeys = new Set();
                 const results = [];
@@ -267,16 +293,16 @@
                     if (c.company_name.toLowerCase().includes(keywordLower)) {
                         const jobCode = c.m202411_job_code || 0;
                         if (!includeAll && jobCode < 300) continue;
-                        if (seenKeys.has(c.company_name + '|' + c.business_no)) continue;
-
-                        seenKeys.add(c.company_name + '|' + c.business_no);
+                        const k = c.company_name + '|' + c.business_no;
+                        if (seenKeys.has(k)) continue;
+                        seenKeys.add(k);
                         results.push(c);
                     }
                 }
 
                 filteredCompanies = results;
                 renderSearchResults();
-            });
+            }, 10);
         }
 
         function renderSearchResults() {
@@ -302,9 +328,15 @@
                 const div = document.createElement('div');
                 div.className = 'company-item';
                 const empCount = (c.m202411_job_code || 0).toLocaleString();
-                const escapedName = c.company_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                div.innerHTML = `<div class="company-name">${escapeHtml(c.company_name)}</div><div class="company-meta"><span>${empCount}명</span></div>`;
-                div.addEventListener('click', () => showDetail(c.business_no, c.company_name, c.company_name + '|' + c.business_no));
+                div.innerHTML =
+                    '<div class="company-name">' + escapeHtml(c.company_name) + '</div>' +
+                    '<div class="company-meta"><span>' + empCount + '명</span></div>';
+                (function(company) {
+                    div.addEventListener('click', function() {
+                        showDetail(company.business_no, company.company_name,
+                                   company.company_name + '|' + company.business_no);
+                    });
+                })(c);
                 fragment.appendChild(div);
             }
 
@@ -323,7 +355,7 @@
                         pages.push('...');
                     }
                 }
-                pages.forEach(p => {
+                pages.forEach(function(p) {
                     if (p === '...') {
                         const span = document.createElement('span');
                         span.style.cssText = 'padding:8px 4px;color:#666;';
@@ -333,16 +365,16 @@
                         const btn = document.createElement('button');
                         btn.className = 'page-btn' + (p === currentPage ? ' active' : '');
                         btn.textContent = p;
-                        btn.addEventListener('click', () => { currentPage = p; renderSearchResults(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+                        btn.addEventListener('click', function() {
+                            currentPage = p;
+                            renderSearchResults();
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        });
                         pagDiv.appendChild(btn);
                     }
                 });
                 container.appendChild(pagDiv);
             }
-        }
-
-        function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         function showDetail(businessNo, companyName, key) {
@@ -364,16 +396,16 @@
         }
 
         function displayDetail(row) {
-            const monthly = [];
-            let totalHires = 0, totalSep = 0;
+            var monthly = [];
+            var totalHires = 0, totalSep = 0;
 
-            for (let i = 0; i < MONTHS.length; i++) {
-                const m = MONTHS[i];
-                const jobCode = row['m' + m + '_job_code'] || 0;
-                const annualSalary = row['m' + m + '_annual_salary'] || 0;
-                const newHires = row['m' + m + '_new_hires'] || 0;
-                const separations = row['m' + m + '_separations'] || 0;
-                const { yearly, monthly: monthlyVal } = calcSalary(annualSalary, jobCode);
+            for (var i = 0; i < MONTHS.length; i++) {
+                var m = MONTHS[i];
+                var jobCode = row['m' + m + '_job_code'] || 0;
+                var annualSalary = row['m' + m + '_annual_salary'] || 0;
+                var newHires = row['m' + m + '_new_hires'] || 0;
+                var separations = row['m' + m + '_separations'] || 0;
+                var sal = calcSalary(annualSalary, jobCode);
 
                 totalHires += newHires;
                 totalSep += separations;
@@ -383,17 +415,21 @@
                     job_code: jobCode,
                     new_hires: newHires,
                     separations: separations,
-                    yearly: yearly,
-                    monthly: monthlyVal
+                    yearly: sal.yearly,
+                    monthly: sal.monthly
                 });
             }
 
-            const latest = monthly[monthly.length - 1];
-            document.getElementById('statEmployees').textContent = latest.job_code ? latest.job_code.toLocaleString() : '-';
-            document.getElementById('statSalary').textContent = latest.yearly ? Math.round(latest.yearly / 10000).toLocaleString() : '-';
-            document.getElementById('statMonthly').textContent = latest.monthly ? Math.round(latest.monthly / 10000).toLocaleString() : '-';
+            var latest = monthly[monthly.length - 1];
+            document.getElementById('statEmployees').textContent =
+                latest.job_code ? latest.job_code.toLocaleString() : '-';
+            document.getElementById('statSalary').textContent =
+                latest.yearly ? Math.round(latest.yearly / 10000).toLocaleString() : '-';
+            document.getElementById('statMonthly').textContent =
+                latest.monthly ? Math.round(latest.monthly / 10000).toLocaleString() : '-';
 
-            const stability = totalHires + totalSep > 0 ? (totalHires / (totalHires + totalSep) * 5).toFixed(1) : '-';
+            var stability = totalHires + totalSep > 0 ?
+                (totalHires / (totalHires + totalSep) * 5).toFixed(1) : '-';
             document.getElementById('statStability').textContent = stability + ' / 5.0';
 
             renderCharts(monthly);
@@ -404,20 +440,20 @@
 
         function calcSalary(annualSalary, jobCode) {
             if (!annualSalary || !jobCode || jobCode === 0) return { yearly: 0, monthly: 0 };
-            const perPerson = annualSalary / jobCode;
-            const monthlyVal = (perPerson / 9) * 100;
-            const yearly = monthlyVal * 12;
+            var perPerson = annualSalary / jobCode;
+            var monthlyVal = (perPerson / 9) * 100;
+            var yearly = monthlyVal * 12;
             return { yearly: Math.round(yearly), monthly: Math.round(monthlyVal) };
         }
 
         function renderCharts(monthly) {
-            const labels = monthly.map(m => m.month);
+            var labels = monthly.map(function(m) { return m.month; });
 
             if (employeeChart) employeeChart.destroy();
             if (salaryChart) salaryChart.destroy();
             if (hireChart) hireChart.destroy();
 
-            const chartDefaults = {
+            var chartDefaults = {
                 responsive: true,
                 maintainAspectRatio: true,
                 plugins: { legend: { display: false } },
@@ -430,44 +466,46 @@
             employeeChart = new Chart(document.getElementById('employeeChart'), {
                 type: 'line',
                 data: {
-                    labels,
+                    labels: labels,
                     datasets: [{
                         label: '직원수',
-                        data: monthly.map(m => m.job_code),
+                        data: monthly.map(function(m) { return m.job_code; }),
                         borderColor: '#ff6b35',
                         backgroundColor: 'rgba(255, 107, 53, 0.1)',
-                        tension: 0.3,
-                        fill: true,
-                        pointRadius: 3
+                        tension: 0.3, fill: true, pointRadius: 3
                     }]
                 },
-                options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: false } } }
+                options: {
+                    ...chartDefaults,
+                    scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: false } }
+                }
             });
 
             salaryChart = new Chart(document.getElementById('salaryChart'), {
                 type: 'line',
                 data: {
-                    labels,
+                    labels: labels,
                     datasets: [{
                         label: '평균연봉(만원)',
-                        data: monthly.map(m => m.yearly ? Math.round(m.yearly / 10000) : 0),
+                        data: monthly.map(function(m) { return m.yearly ? Math.round(m.yearly / 10000) : 0; }),
                         borderColor: '#38ef7d',
                         backgroundColor: 'rgba(56, 239, 125, 0.1)',
-                        tension: 0.3,
-                        fill: true,
-                        pointRadius: 3
+                        tension: 0.3, fill: true, pointRadius: 3
                     }]
                 },
-                options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: false } } }
+                options: {
+                    ...chartDefaults,
+                    scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: false } }
+                }
             });
 
             hireChart = new Chart(document.getElementById('hireChart'), {
                 type: 'bar',
                 data: {
-                    labels,
+                    labels: labels,
                     datasets: [
-                        { label: '신규 채용', data: monthly.map(m => m.new_hires), backgroundColor: '#11998e', borderRadius: 4 },
-                        { label: '퇴사자', data: monthly.map(m => m.separations), backgroundColor: '#e63946', borderRadius: 4 }
+                        { label: '신규 채용', data: monthly.map(function(m) { return m.new_hires; }), backgroundColor: '#11998e', borderRadius: 4 },
+                        { label: '퇴사자', data: monthly.map(function(m) { return m.separations; }), backgroundColor: '#e63946', borderRadius: 4 }
                     ]
                 },
                 options: {
@@ -479,11 +517,15 @@
         }
 
         function renderTable(monthly) {
-            const tbody = document.querySelector('#dataTable tbody');
-            const rows = monthly.slice().reverse().map(m => {
-                const monthlyDisplay = m.monthly ? Math.round(m.monthly / 10000).toLocaleString() + '만원' : '-';
-                const yearlyDisplay = m.yearly ? Math.round(m.yearly / 10000).toLocaleString() + '만원' : '-';
-                return `<tr><td>${m.month}</td><td>${m.job_code ? m.job_code.toLocaleString() : '-'}</td><td style="color:#11998e">+${(m.new_hires || 0).toLocaleString()}</td><td style="color:#e63946">-${(m.separations || 0).toLocaleString()}</td><td>${monthlyDisplay}</td><td>${yearlyDisplay}</td></tr>`;
+            var tbody = document.querySelector('#dataTable tbody');
+            var rows = monthly.slice().reverse().map(function(m) {
+                var md = m.monthly ? Math.round(m.monthly / 10000).toLocaleString() + '만원' : '-';
+                var yd = m.yearly ? Math.round(m.yearly / 10000).toLocaleString() + '만원' : '-';
+                return '<tr><td>' + m.month + '</td>' +
+                    '<td>' + (m.job_code ? m.job_code.toLocaleString() : '-') + '</td>' +
+                    '<td style="color:#11998e">+' + (m.new_hires || 0).toLocaleString() + '</td>' +
+                    '<td style="color:#e63946">-' + (m.separations || 0).toLocaleString() + '</td>' +
+                    '<td>' + md + '</td><td>' + yd + '</td></tr>';
             }).join('');
             tbody.innerHTML = rows;
         }
@@ -492,16 +534,16 @@
             document.getElementById('detailPanel').classList.remove('active');
         }
 
-        document.getElementById('searchBtn').addEventListener('click', () => {
+        document.getElementById('searchBtn').addEventListener('click', function() {
             clearTimeout(searchDebounceTimer);
             performSearch();
         });
 
-        const keywordInput = document.getElementById('keyword');
+        var keywordInput = document.getElementById('keyword');
         keywordInput.addEventListener('input', function() {
             clearTimeout(searchDebounceTimer);
-            searchDebounceTimer = setTimeout(() => {
-                if (this.value.trim().length > 0) performSearch();
+            searchDebounceTimer = setTimeout(function() {
+                if (keywordInput.value.trim().length > 0) performSearch();
             }, 300);
         });
 
