@@ -1,0 +1,106 @@
+# split_csv_final.py
+import os
+import csv
+from collections import defaultdict
+
+INPUT_FILE = r'C:\Users\gytw2\Desktop\comp\data\com_sum.CSV'
+OUTPUT_DIR = r'C:\Users\gytw2\Desktop\comp\data_final'
+ENCODING = 'utf-8'
+
+# 14개 초성 그룹 매핑
+CHOSEONG_TO_GROUP = {
+    0: '가', 1: '가', 2: '나', 3: '다', 4: '다',
+    5: '라', 6: '마', 7: '바', 8: '바', 9: '사',
+    10: '사', 11: '아', 12: '자', 13: '자', 14: '차',
+    15: '카', 16: '타', 17: '파', 18: '하'
+}
+
+# 21개 중성 → 10개 그룹
+JUNGSEONG_TO_GROUP = {
+    0: '아', 1: '아', 2: '야', 3: '여', 4: '어', 5: '어',
+    6: '오', 7: '오', 8: '오', 9: '오', 10: '요',
+    11: '우', 12: '우', 13: '우', 14: '우', 15: '유',
+    16: '으', 17: '으', 18: '이', 19: '이', 20: '이'
+}
+
+def is_hangul(char):
+    code = ord(char)
+    return 0xAC00 <= code <= 0xD7A3
+
+def classify_korean_syllable(char):
+    if not is_hangul(char):
+        return '_'
+    
+    code = ord(char) - 0xAC00
+    choseong = code // 588
+    jungseong = (code % 588) // 28
+    
+    group = CHOSEONG_TO_GROUP.get(choseong, '_')
+    vowel_group = JUNGSEONG_TO_GROUP.get(jungseong, '_')
+    
+    return f"{group}{vowel_group}"
+
+def get_char_category(char):
+    if char.isdigit():
+        return char
+    elif char.isalpha():
+        return char.lower()
+    elif is_hangul(char):
+        return classify_korean_syllable(char)
+    else:
+        return '_'
+
+def split_csv():
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+    
+    print(f"📂 입력: {INPUT_FILE}")
+    print(f"📁 출력: {OUTPUT_DIR}\n")
+    
+    output_files = {}
+    file_counts = defaultdict(int)
+    
+    with open(INPUT_FILE, 'r', encoding=ENCODING) as infile:
+        reader = csv.reader(infile)
+        header = next(reader, None)
+        if header is None:
+            print("❌ 파일이 비어있습니다.")
+            return
+        
+        header_str = ','.join(header) + '\n'
+        
+        total = 0
+        for row in reader:
+            if not row:
+                continue
+            
+            company_name = row[0].strip()
+            if not company_name:
+                continue
+            
+            first_char = company_name[0]
+            category = get_char_category(first_char)
+            file_name = f"{category}.csv"
+            
+            if file_name not in output_files:
+                output_path = os.path.join(OUTPUT_DIR, file_name)
+                output_files[file_name] = open(output_path, 'w', encoding=ENCODING)
+                output_files[file_name].write(header_str)
+            
+            output_files[file_name].write(','.join(row) + '\n')
+            file_counts[file_name] += 1
+            total += 1
+            
+            if total % 100000 == 0:
+                print(f"  ⏳ {total:,}건 처리 중...")
+    
+    for f in output_files.values():
+        f.close()
+    
+    print(f"\n✅ 완료! 총 {total:,}건")
+    print(f"📁 파일: {len(output_files)}개\n")
+    for fn, cnt in sorted(file_counts.items())[:20]:
+        print(f"  {fn}: {cnt:,}")
+
+if __name__ == '__main__':
+    split_csv()

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회사명 검색</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Malgun Gothic', sans-serif; background: #f5f5f5; color: #333; }
+.container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+h1 { font-size: 24px; margin-bottom: 24px; text-align: center; color: #1a1a1a; }
+.search-box { display: flex; gap: 8px; margin-bottom: 20px; }
+#searchInput { flex: 1; padding: 12px 16px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none; transition: border-color .2s; }
+#searchInput:focus { border-color: #4a90d9; }
+#searchBtn { padding: 12px 24px; font-size: 16px; background: #4a90d9; color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: background .2s; }
+#searchBtn:hover { background: #357abd; }
+#loading { display: none; text-align: center; padding: 20px; color: #666; }
+#loading.show { display: block; }
+#error { display: none; text-align: center; padding: 20px; color: #e74c3c; }
+#error.show { display: block; }
+.result-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 0; border-bottom: 1px solid #eee; }
+#resultCount { font-size: 14px; color: #666; }
+#sourceFile { font-size: 12px; color: #999; }
+#resultList { list-style: none; }
+.result-item { padding: 12px 16px; background: #fff; border: 1px solid #eee; border-radius: 6px; margin-bottom: 6px; font-size: 15px; word-break: break-all; }
+.result-item .company-name { font-weight: 600; }
+.result-item .company-name .highlight { background: #fff3cd; padding: 0 2px; }
+.empty { text-align: center; padding: 40px; color: #999; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>회사명 검색</h1>
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="회사명을 입력하세요 (예: 삼성전자)" autofocus>
+    <button id="searchBtn">검색</button>
+  </div>
+  <div id="loading">데이터 로딩 중...</div>
+  <div id="error"></div>
+  <div id="resultArea" style="display:none;">
+    <div class="result-info">
+      <span id="resultCount"></span>
+      <span id="sourceFile"></span>
+    </div>
+    <ul id="resultList"></ul>
+  </div>
+</div>
+<script>
+const CHOSEONG_GROUP = {0:'가',1:'가',2:'나',3:'다',4:'다',5:'라',6:'마',7:'바',8:'바',9:'사',10:'사',11:'아',12:'자',13:'자',14:'차',15:'카',16:'타',17:'파',18:'하'};
+const JUNGSEONG_GROUP = {0:'아',1:'아',2:'야',3:'여',4:'어',5:'어',6:'오',7:'오',8:'오',9:'오',10:'요',11:'우',12:'우',13:'우',14:'우',15:'유',16:'으',17:'으',18:'이',19:'이',20:'이'};
+
+function isHangul(ch) { const c = ch.charCodeAt(0); return c >= 0xAC00 && c <= 0xD7A3; }
+
+function classifySyllable(ch) {
+  if (!isHangul(ch)) return ch;
+  const code = ch.charCodeAt(0) - 0xAC00;
+  const choseong = Math.floor(code / 588);
+  const jungseong = Math.floor((code % 588) / 28);
+  return CHOSEONG_GROUP[choseong] + JUNGSEONG_GROUP[jungseong];
+}
+
+function getFileKey(ch) {
+  let name = classifySyllable(ch);
+  if (/^[A-Z]$/.test(name)) name = name.toLowerCase();
+  return name;
+}
+
+function highlightText(text, query) {
+  const re = new RegExp('(' + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+  return text.replace(re, '<span class="highlight">$1</span>');
+}
+
+const $ = id => document.getElementById(id);
+const input = $('searchInput');
+const btn = $('searchBtn');
+const loading = $('loading');
+const error = $('error');
+const resultArea = $('resultArea');
+const resultCount = $('resultCount');
+const sourceFile = $('sourceFile');
+const resultList = $('resultList');
+
+input.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+btn.addEventListener('click', search);
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('로드 실패: ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+function findName(entry) {
+  const idx = entry.indexOf(',');
+  return idx === -1 ? entry.trim() : entry.substring(0, idx).trim();
+}
+
+async function loadData(key) {
+  const varName = 'CSV_DATA_' + key;
+  if (window[varName]) delete window[varName];
+  await loadScript('data/js_data/' + key + '.js');
+  if (window[varName] && Array.isArray(window[varName])) {
+    return { data: window[varName], label: key + '.js (' + window[varName].length + '개)' };
+  }
+  throw new Error('데이터 없음: ' + key);
+}
+
+async function search() {
+  const query = input.value.trim();
+  if (!query) return;
+  error.classList.remove('show');
+  error.style.display = 'none';
+  loading.classList.add('show');
+  resultArea.style.display = 'none';
+  resultList.innerHTML = '';
+  const key = getFileKey(query[0]);
+  const q = query.toLowerCase();
+  let results = [];
+
+  try {
+    let loaded;
+    try {
+      loaded = await loadData(key);
+    } catch {
+      loaded = await loadData('기타');
+    }
+    sourceFile.textContent = loaded.label;
+    for (const entry of loaded.data) {
+      const name = findName(entry);
+      if (name.toLowerCase().includes(q)) results.push(name);
+    }
+    resultArea.style.display = 'block';
+    resultCount.textContent = '검색 결과: ' + results.length + '건';
+    if (results.length === 0) {
+      resultList.innerHTML = '<li class="empty">일치하는 회사명이 없습니다.</li>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const name of results) {
+      const li = document.createElement('li');
+      li.className = 'result-item';
+      li.innerHTML = '<span class="company-name">' + highlightText(name, query) + '</span>';
+      frag.appendChild(li);
+    }
+    resultList.appendChild(frag);
+  } catch (e) {
+    error.textContent = '오류: ' + e.message;
+    error.classList.add('show');
+    error.style.display = 'block';
+  } finally {
+    loading.classList.remove('show');
+  }
+}
+</script>
+</body>
+</html>
