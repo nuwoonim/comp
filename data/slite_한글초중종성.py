@@ -4,8 +4,8 @@ import csv
 from collections import defaultdict
 
 # 입력/출력 경로
-INPUT_FILE = r'C:\Users\gytw2\Desktop\comp\data\com_sum.CSV'
-OUTPUT_DIR = r'C:\Users\gytw2\Desktop\comp\data_final'
+INPUT_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'com_sum.CSV')
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data_final')
 
 # 인코딩
 ENCODING = 'utf-8'
